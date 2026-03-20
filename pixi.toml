@@ -15,13 +15,21 @@ cuda = "12.9"
 [dependencies]
 cuda = "12.9.*"
 minisgl = { path = "src" }
+
 pytest = "*"
+pyarrow = "*"
+openai = "*"
+uvicorn = "*"
+fastapi = "*"
+prompt_toolkit = "*"
 
 [activation.env]
 HF_HOME = "/data/hf"
-HF_HUB_OFFLINE = "1"
-TRANSFORMERS_OFFLINE = "1"
 
 [tasks]
 test = "pytest tests/ -v --ignore=src"
-bench = "python benchmark/bench_latency.py"
+serve = "python -m minisgl"
+bench-offline = "python benchmark/offline/bench.py"
+bench-offline-wildchat = "python benchmark/offline/bench_wildchat.py"
+bench-online-simple = "python benchmark/online/bench_simple.py"
+bench-online-qwen = "python benchmark/online/bench_qwen.py"

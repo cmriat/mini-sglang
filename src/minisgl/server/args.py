@@ -18,6 +18,10 @@ class ServerArgs(SchedulerConfig):
     num_tokenizer: int = 0
     silent_output: bool = False
 
+    # Training window
+    train_interval: int = 0  # 0 = disabled, >0 = train every N tokens
+    train_module: str | None = None  # Python module path, e.g. "train_infer.training_window"
+
     @property
     def share_tokenizer(self) -> bool:
         return self.num_tokenizer == 0
@@ -221,6 +225,21 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         "--shell-mode",
         action="store_true",
         help="Run the server in shell mode.",
+    )
+
+    parser.add_argument(
+        "--train-interval",
+        type=int,
+        default=ServerArgs.train_interval,
+        help="Train every N tokens processed. 0 to disable.",
+    )
+
+    parser.add_argument(
+        "--train-module",
+        type=str,
+        default=ServerArgs.train_module,
+        help="Python module that provides create_train_fn(scheduler) → train_fn. "
+             "e.g. 'train_infer.training_window'",
     )
 
     # Parse arguments

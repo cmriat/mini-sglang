@@ -17,9 +17,21 @@ def _run_scheduler(args: ServerArgs, ack_queue: mp.Queue[str]) -> None:
     import torch
     from minisgl.scheduler import Scheduler
 
-    with torch.inference_mode():
+    with torch.no_grad():
         scheduler = Scheduler(args)
         scheduler.sync_all_ranks()
+
+        # Register training callback inside inference_mode
+        # (bind_weights wraps inference tensors as Parameters)
+        # train_fn itself exits inference_mode for forward/backward
+        if args.train_interval > 0 and args.train_module:
+            import importlib
+            mod = importlib.import_module(args.train_module)
+            train_fn = mod.create_train_fn(scheduler)
+            scheduler.register_training_callback(args.train_interval, train_fn)
+            init_logger(__name__).info(
+                f"Training callback registered: interval={args.train_interval}, module={args.train_module}"
+            )
 
         if args.tp_info.is_primary():
             ack_queue.put("Scheduler is ready")

@@ -80,6 +80,44 @@ class Scheduler(SchedulerIOMixin):
         logger.info_rank0("Scheduler is idle, waiting for new reqs...")
         self.cache_manager.check_integrity()
 
+    # === Training window support ===
+
+    def register_training_callback(self, interval: int, train_fn) -> None:
+        """Register a training callback that fires every `interval` tokens processed.
+
+        train_fn(scheduler) is called with the scheduler (gives access to engine, models, etc.).
+        """
+        self._train_interval = interval
+        self._train_fn = train_fn
+        self._tokens_since_train = 0
+
+    def _should_train(self) -> bool:
+        return hasattr(self, "_train_fn") and self._tokens_since_train >= self._train_interval
+
+    def _do_train(self) -> None:
+        self._tokens_since_train = 0
+        logger.info_rank0("Entering training window...")
+        self._train_fn(self)
+        self._invalidate_kv_cache()
+        logger.info_rank0("Training window done, KV cache invalidated.")
+
+    def _invalidate_kv_cache(self) -> None:
+        """After weight update, move decode requests back to prefill so KV cache gets recomputed."""
+        reqs = list(self.decode_manager.running_reqs)
+        if not reqs:
+            return
+        logger.info_rank0(f"Invalidating KV cache for {len(reqs)} in-flight requests")
+        # Free old resources (table_idx, cache pages)
+        for req in reqs:
+            self._free_req_resources(req)
+        self.decode_manager.running_reqs.clear()
+        # Re-enqueue as fresh pending prefill requests
+        from .prefill import PendingReq
+        for req in reqs:
+            self.prefill_manager.pending_list.append(
+                PendingReq(uid=req.uid, input_ids=req.input_ids, sampling_params=req.sampling_params)
+            )
+
     def overlap_loop(self, last_data: ForwardData | None) -> ForwardData | None:
         """
         The main loop of overlapping scheduling and execution.
@@ -103,6 +141,11 @@ class Scheduler(SchedulerIOMixin):
                 ongoing_data = (forward_input, self._forward(forward_input))
 
         self._process_last_data(last_data)
+        if self._should_train():
+            # Process ongoing_data before training window (avoid double-free after KV invalidation)
+            self._process_last_data(ongoing_data)
+            ongoing_data = None
+            self._do_train()
         return ongoing_data
 
     def normal_loop(self) -> None:
@@ -116,8 +159,10 @@ class Scheduler(SchedulerIOMixin):
             ongoing_data = (forward_input, self._forward(forward_input))
 
         self._process_last_data(ongoing_data)
+        if self._should_train():
+            self._do_train()
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def run_forever(self) -> NoReturn:
         if ENV.DISABLE_OVERLAP_SCHEDULING:
             with self.engine_stream_ctx:
@@ -165,6 +210,9 @@ class Scheduler(SchedulerIOMixin):
 
         self.finished_reqs = new_finished_reqs
         self.send_result(reply)
+        # Track completed requests for training interval
+        if hasattr(self, "_tokens_since_train"):
+            self._tokens_since_train += len(new_finished_reqs)
 
     def _process_one_msg(self, msg: BaseBackendMsg) -> None:
         if isinstance(msg, BatchBackendMsg):

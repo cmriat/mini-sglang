@@ -1,0 +1,19 @@
+[package]
+name = "minisgl"
+version = "0.1.0"
+
+[package.build]
+backend = { name = "pixi-build-python", version = "*" }
+
+[package.host-dependencies]
+python = "3.12.*"
+hatchling = "*"
+
+[package.run-dependencies]
+python = "3.12.*"
+pytorch = { version = "*", build = "*cuda*" }
+msgpack-python = "*"
+pyzmq = "*"
+flashinfer = "*"
+sgl-kernel = "*"
+transformers = ">=4.56.0"

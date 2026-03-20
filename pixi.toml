@@ -1,0 +1,27 @@
+[workspace]
+channels = [
+  "https://srgconda.bj.bcebos.com/",
+  "https://repo.prefix.dev/meta-forge",
+  "conda-forge",
+]
+name = "mini-sglang"
+platforms = ["linux-64"]
+preview = ["pixi-build"]
+version = "0.1.0"
+
+[system-requirements]
+cuda = "12.9"
+
+[dependencies]
+cuda = "12.9.*"
+minisgl = { path = "src" }
+pytest = "*"
+
+[activation.env]
+HF_HOME = "/data/hf"
+HF_HUB_OFFLINE = "1"
+TRANSFORMERS_OFFLINE = "1"
+
+[tasks]
+test = "pytest tests/ -v --ignore=src"
+bench = "python benchmark/bench_latency.py"

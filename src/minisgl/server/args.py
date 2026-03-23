@@ -18,8 +18,7 @@ class ServerArgs(SchedulerConfig):
     num_tokenizer: int = 0
     silent_output: bool = False
 
-    # Training window
-    train_interval: int = 0  # 0 = disabled, >0 = train every N tokens
+    # Training
     train_module: str | None = None  # Python module path, e.g. "train_infer.training_window"
 
     @property
@@ -225,13 +224,6 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         "--shell-mode",
         action="store_true",
         help="Run the server in shell mode.",
-    )
-
-    parser.add_argument(
-        "--train-interval",
-        type=int,
-        default=ServerArgs.train_interval,
-        help="Train every N tokens processed. 0 to disable.",
     )
 
     parser.add_argument(

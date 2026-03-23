@@ -39,3 +39,10 @@ class UserMsg(BaseBackendMsg):
 @dataclass
 class AbortBackendMsg(BaseBackendMsg):
     uid: int
+
+
+@dataclass
+class TrainSFTMsg(BaseBackendMsg):
+    data_path: str | None = None       # 文件路径（正式训练）
+    messages: list | None = None       # 单条/多条 messages（调试/即时）
+    mode: str = "online"               # "online" or "full"

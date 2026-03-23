@@ -11,6 +11,7 @@ from minisgl.message import (
     BatchBackendMsg,
     DetokenizeMsg,
     ExitMsg,
+    TrainSFTMsg,
     UserMsg,
 )
 from minisgl.utils import init_logger, load_tokenizer
@@ -82,22 +83,18 @@ class Scheduler(SchedulerIOMixin):
 
     # === Training window support ===
 
-    def register_training_callback(self, interval: int, train_fn) -> None:
-        """Register a training callback that fires every `interval` tokens processed.
-
-        train_fn(scheduler) is called with the scheduler (gives access to engine, models, etc.).
-        """
-        self._train_interval = interval
+    def set_train_fn(self, train_fn) -> None:
+        """Set the training function. Called once at startup by the training module."""
         self._train_fn = train_fn
-        self._tokens_since_train = 0
+        self._pending_train_requests: list[TrainSFTMsg] = []
 
     def _should_train(self) -> bool:
-        return hasattr(self, "_train_fn") and self._tokens_since_train >= self._train_interval
+        return hasattr(self, "_pending_train_requests") and len(self._pending_train_requests) > 0
 
     def _do_train(self) -> None:
-        self._tokens_since_train = 0
-        logger.info_rank0("Entering training window...")
-        self._train_fn(self)
+        msg = self._pending_train_requests.pop(0)
+        logger.info_rank0(f"Entering training window: {msg.data_path} (mode={msg.mode})")
+        self._train_fn(self, msg)
         self._invalidate_kv_cache()
         logger.info_rank0("Training window done, KV cache invalidated.")
 
@@ -210,9 +207,6 @@ class Scheduler(SchedulerIOMixin):
 
         self.finished_reqs = new_finished_reqs
         self.send_result(reply)
-        # Track completed requests for training interval
-        if hasattr(self, "_tokens_since_train"):
-            self._tokens_since_train += len(new_finished_reqs)
 
     def _process_one_msg(self, msg: BaseBackendMsg) -> None:
         if isinstance(msg, BatchBackendMsg):
@@ -235,6 +229,12 @@ class Scheduler(SchedulerIOMixin):
                     f"Adjust max_tokens to {max_output_len} for request {msg.uid}."
                 )
             self.prefill_manager.add_one_req(msg)
+        elif isinstance(msg, TrainSFTMsg):
+            logger.info_rank0(f"Received train request: {msg.data_path} (mode={msg.mode})")
+            if hasattr(self, "_pending_train_requests"):
+                self._pending_train_requests.append(msg)
+            else:
+                logger.warning_rank0("Training not configured, ignoring train request")
         elif isinstance(msg, AbortBackendMsg):
             logger.debug_rank0("Aborting request %d", msg.uid)
             req_to_free = self.prefill_manager.abort_req(msg.uid)

@@ -15,10 +15,12 @@ from minisgl.core import SamplingParams
 from minisgl.env import ENV
 from minisgl.message import (
     AbortMsg,
+    BaseBackendMsg,
     BaseFrontendMsg,
     BaseTokenizerMsg,
     BatchFrontendMsg,
     TokenizeMsg,
+    TrainSFTMsg,
     UserReply,
 )
 from minisgl.utils import ZmqAsyncPullQueue, ZmqAsyncPushQueue, init_logger
@@ -102,6 +104,7 @@ class FrontendManager:
     config: ServerArgs
     send_tokenizer: ZmqAsyncPushQueue[BaseTokenizerMsg]
     recv_tokenizer: ZmqAsyncPullQueue[BaseFrontendMsg]
+    send_backend: ZmqAsyncPushQueue[BaseBackendMsg] | None = None  # direct to scheduler
     uid_counter: int = 0
     initialized: bool = False
     ack_map: Dict[int, List[UserReply]] = field(default_factory=dict)
@@ -284,6 +287,22 @@ async def v1_completions(req: OpenAICompletionRequest, request: Request):
     )
 
 
+class TrainSFTRequest(BaseModel):
+    data: str | None = None        # file path (jsonl)
+    messages: list | None = None   # single/few messages (debug)
+    mode: str = "online"           # "online" or "full"
+
+
+@app.post("/v1/train/sft")
+async def train_sft(req: TrainSFTRequest):
+    state = get_global_state()
+    if state.send_backend is None:
+        return {"error": "Training not configured (--train-module not set)"}
+    msg = TrainSFTMsg(data_path=req.data, messages=req.messages, mode=req.mode)
+    await state.send_backend.put(msg)
+    return {"status": "queued", "data": req.data, "mode": req.mode}
+
+
 @app.get("/v1/models")
 async def available_models():
     state = get_global_state()
@@ -431,6 +450,11 @@ def run_api_server(config: ServerArgs, start_backend: Callable[[], None], run_sh
             config.zmq_tokenizer_addr,
             create=config.frontend_create_tokenizer_link,
             encoder=BaseTokenizerMsg.encoder,
+        ),
+        send_backend=ZmqAsyncPushQueue(
+            config.zmq_backend_addr,
+            create=False,
+            encoder=BaseBackendMsg.encoder,
         ),
     )
 

@@ -29,6 +29,7 @@ class EngineConfig:
     use_pynccl: bool = True
     max_seq_len_override: int | None = None
     num_page_override: int | None = None  # if not None, will override the number of pages
+    defer_runtime_init: bool = False  # if True, don't init KV cache in __init__ (for training module)
 
     @cached_property
     def hf_config(self):

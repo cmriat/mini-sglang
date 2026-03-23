@@ -17,16 +17,28 @@ def _run_scheduler(args: ServerArgs, ack_queue: mp.Queue[str], train_config=None
     import torch
     from minisgl.scheduler import Scheduler
 
+    from dataclasses import replace as dc_replace
+
+    # If training is configured, defer KV cache init until after training model setup
+    if args.train_module:
+        args = dc_replace(args, defer_runtime_init=True)
+
     with torch.no_grad():
         scheduler = Scheduler(args)
         scheduler.sync_all_ranks()
 
-        # Set up training module if configured
+        # Set up training module if configured (before KV cache to allow to_empty)
         if args.train_module:
+            import gc
             import importlib
             mod = importlib.import_module(args.train_module)
             train_fn = mod.create_train_fn(scheduler, train_config)
             scheduler.set_train_fn(train_fn)
+            # Free to_empty temporary allocations, then init KV cache with remaining memory
+            gc.collect()
+            torch.cuda.empty_cache()
+            scheduler.engine.init_runtime()
+            scheduler._init_managers()
             init_logger(__name__).info(f"Training module loaded: {args.train_module}")
 
         if args.tp_info.is_primary():

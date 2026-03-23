@@ -48,6 +48,7 @@ class Scheduler(SchedulerIOMixin):
         from minisgl.engine import Engine
 
         self.engine = Engine(config)
+        self._config = config
 
         # use another stream to overlap metadata processing with computation
         self.device = self.engine.device
@@ -55,26 +56,30 @@ class Scheduler(SchedulerIOMixin):
         self.engine_stream_ctx = torch.cuda.stream(self.engine.stream)
         torch.cuda.set_stream(self.stream)
 
-        # initialize other managers
+        self.decode_manager = DecodeManager(config.page_size)
+        self.finished_reqs: Set[Req] = set()
+        self.tokenizer = load_tokenizer(config.model_path)
+        self.eos_token_id = self.tokenizer.eos_token_id
+        self.prefill_budget = config.max_extend_tokens
+
+        # Initialize the I/O mixin
+        super().__init__(config, self.engine.tp_cpu_group)
+
+        # Runtime managers (depend on engine KV cache being initialized)
+        if self.engine._runtime_initialized:
+            self._init_managers()
+
+    def _init_managers(self):
+        """Initialize managers that depend on engine runtime (KV cache, page table)."""
+        config = self._config
         self.table_manager = TableManager(config.max_running_req, self.engine.page_table)
         self.cache_manager = CacheManager(
             self.engine.num_pages, config.page_size, self.engine.page_table, config.cache_type
         )
-        self.decode_manager = DecodeManager(config.page_size)
         self.prefill_manager = PrefillManager(
             self.cache_manager, self.table_manager, self.decode_manager
         )
-
-        # some alias for easy access
-        self.finished_reqs: Set[Req] = set()
-        self.tokenizer = load_tokenizer(config.model_path)
-        self.eos_token_id = self.tokenizer.eos_token_id
         self.token_pool = self.table_manager.token_pool
-        self.prefill_budget = config.max_extend_tokens
-        # self.config = config
-
-        # Initialize the I/O mixin
-        super().__init__(config, self.engine.tp_cpu_group)
 
     def run_when_idle(self) -> None:
         """Called when the scheduler is idle to perform background tasks."""

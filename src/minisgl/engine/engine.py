@@ -51,6 +51,21 @@ class Engine:
         with torch.device("meta"), torch_dtype(config.dtype):
             self.model = create_model(config.model_config)
         self.model.load_state_dict(self._load_weight_state_dict(config))
+        self._init_free_memory = init_free_memory
+        self._runtime_initialized = False
+
+        if not config.defer_runtime_init:
+            self.init_runtime()
+
+    def init_runtime(self):
+        """Initialize KV cache, page table, attention backend, sampler, and CUDA graphs.
+
+        Separated from __init__ so that training module can initialize between
+        model loading and KV cache allocation (to_empty needs temporary GPU memory).
+        Call this after training init + GC to maximize KV cache size.
+        """
+        config = self.config
+        init_free_memory = self._init_free_memory
 
         # ======================= KV cache initialization ========================
         self.num_pages = self._determine_num_pages(init_free_memory, config)
@@ -85,6 +100,7 @@ class Engine:
 
         post_free_memory = self._sync_get_memory()[0]
         logger.info_rank0(f"Free memory after initialization: {mem_GB(post_free_memory)}")
+        self._runtime_initialized = True
 
         # ======================= Graph capture initialization ========================
         self.dummy_req = Req(

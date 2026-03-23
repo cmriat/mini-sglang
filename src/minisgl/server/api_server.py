@@ -303,6 +303,23 @@ async def train_sft(req: TrainSFTRequest):
     return {"status": "queued", "data": req.data, "mode": req.mode}
 
 
+@app.get("/v1/train/config")
+async def get_train_config():
+    state = get_global_state()
+    if state.train_config is None:
+        return {"error": "Training not configured"}
+    return dict(state.train_config)
+
+
+@app.post("/v1/train/config")
+async def update_train_config(req: dict):
+    state = get_global_state()
+    if state.train_config is None:
+        return {"error": "Training not configured"}
+    state.train_config.update(req)
+    return dict(state.train_config)
+
+
 @app.get("/v1/models")
 async def available_models():
     state = get_global_state()
@@ -419,7 +436,7 @@ async def shell():
             child.kill()
 
 
-def run_api_server(config: ServerArgs, start_backend: Callable[[], None], run_shell: bool) -> None:
+def run_api_server(config: ServerArgs, start_backend: Callable[[], None], run_shell: bool, train_config=None) -> None:
     """
     Run the frontend API server (FastAPI + uvicorn) and wire it to the tokenizer process via ZMQ.
 
@@ -457,6 +474,7 @@ def run_api_server(config: ServerArgs, start_backend: Callable[[], None], run_sh
             encoder=BaseBackendMsg.encoder,
         ),
     )
+    _GLOBAL_STATE.train_config = train_config
 
     # start the backend here
     start_backend()

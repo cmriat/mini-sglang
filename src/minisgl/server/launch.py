@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from .args import ServerArgs
 
 
-def _run_scheduler(args: ServerArgs, ack_queue: mp.Queue[str]) -> None:
+def _run_scheduler(args: ServerArgs, ack_queue: mp.Queue[str], train_config=None) -> None:
     import torch
     from minisgl.scheduler import Scheduler
 
@@ -25,7 +25,7 @@ def _run_scheduler(args: ServerArgs, ack_queue: mp.Queue[str]) -> None:
         if args.train_module:
             import importlib
             mod = importlib.import_module(args.train_module)
-            train_fn = mod.create_train_fn(scheduler)
+            train_fn = mod.create_train_fn(scheduler, train_config)
             scheduler.set_train_fn(train_fn)
             init_logger(__name__).info(f"Training module loaded: {args.train_module}")
 
@@ -52,16 +52,16 @@ def launch_server(run_shell: bool = False) -> None:
     server_args, run_shell = parse_args(sys.argv[1:], run_shell)
     logger = init_logger(__name__, "initializer")
 
-    def start_subprocess() -> None:
-        import multiprocessing as mp
+    # Shared training config (API server and scheduler both access this)
+    import multiprocessing as mp
+    mp.set_start_method("spawn", force=True)
+    manager = mp.Manager()
+    train_config = manager.dict({"lr": 1e-4, "max_grad_norm": 1.0})
 
+    def start_subprocess() -> None:
         from minisgl.tokenizer import tokenize_worker
 
-        mp.set_start_method("spawn", force=True)
-
         world_size = server_args.tp_info.size
-        # a multiprocessing queue to receive ack from subprocesses
-        # so that we can guarantee all subprocesses are ready
         ack_queue: mp.Queue[str] = mp.Queue()
 
         for i in range(world_size):
@@ -71,7 +71,7 @@ def launch_server(run_shell: bool = False) -> None:
             )
             mp.Process(
                 target=_run_scheduler,
-                args=(new_args, ack_queue),
+                args=(new_args, ack_queue, train_config),
                 daemon=False,
                 name=f"minisgl-TP{i}-scheduler",
             ).start()
@@ -118,7 +118,7 @@ def launch_server(run_shell: bool = False) -> None:
         for _ in range(num_tokenizers + 2):
             logger.info(ack_queue.get())
 
-    run_api_server(server_args, start_subprocess, run_shell=run_shell)
+    run_api_server(server_args, start_subprocess, run_shell=run_shell, train_config=train_config)
 
 
 if __name__ == "__main__":

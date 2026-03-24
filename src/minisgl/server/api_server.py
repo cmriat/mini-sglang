@@ -20,6 +20,7 @@ from minisgl.message import (
     BaseTokenizerMsg,
     BatchFrontendMsg,
     TokenizeMsg,
+    TrainRLMsg,
     TrainSFTMsg,
     UserReply,
 )
@@ -293,6 +294,12 @@ class TrainSFTRequest(BaseModel):
     mode: str = "online"           # "online" or "full"
 
 
+class TrainRLRequest(BaseModel):
+    data: str | None = None            # file path (jsonl)
+    completions: list | None = None    # inline data (debug)
+    algorithm: str = "grpo"            # "grpo" etc.
+
+
 @app.post("/v1/train/sft")
 async def train_sft(req: TrainSFTRequest):
     state = get_global_state()
@@ -301,6 +308,16 @@ async def train_sft(req: TrainSFTRequest):
     msg = TrainSFTMsg(data_path=req.data, messages=req.messages, mode=req.mode)
     await state.send_backend.put(msg)
     return {"status": "queued", "data": req.data, "mode": req.mode}
+
+
+@app.post("/v1/train/rl")
+async def train_rl(req: TrainRLRequest):
+    state = get_global_state()
+    if state.send_backend is None:
+        return {"error": "Training not configured (--train-module not set)"}
+    msg = TrainRLMsg(data_path=req.data, completions=req.completions, algorithm=req.algorithm)
+    await state.send_backend.put(msg)
+    return {"status": "queued", "data": req.data, "algorithm": req.algorithm}
 
 
 @app.get("/v1/train/config")

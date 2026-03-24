@@ -48,3 +48,10 @@ class TrainSFTMsg(BaseBackendMsg):
     mode: str = "online"               # "online" or "full"
 
 
+@dataclass
+class TrainRLMsg(BaseBackendMsg):
+    data_path: str | None = None       # jsonl 文件路径
+    completions: list | None = None    # inline 数据（调试）
+    algorithm: str = "grpo"            # "grpo" etc.
+
+

@@ -11,6 +11,7 @@ from minisgl.message import (
     BatchBackendMsg,
     DetokenizeMsg,
     ExitMsg,
+    TrainRLMsg,
     TrainSFTMsg,
     UserMsg,
 )
@@ -98,7 +99,7 @@ class Scheduler(SchedulerIOMixin):
 
     def _do_train(self) -> None:
         msg = self._pending_train_requests.pop(0)
-        logger.info_rank0(f"Entering training window: {msg.data_path} (mode={msg.mode})")
+        logger.info_rank0(f"Entering training window: {type(msg).__name__}")
         self._train_fn(self, msg)
         self._invalidate_kv_cache()
         logger.info_rank0("Training window done, KV cache invalidated.")
@@ -234,8 +235,8 @@ class Scheduler(SchedulerIOMixin):
                     f"Adjust max_tokens to {max_output_len} for request {msg.uid}."
                 )
             self.prefill_manager.add_one_req(msg)
-        elif isinstance(msg, TrainSFTMsg):
-            logger.info_rank0(f"Received train request: {msg.data_path} (mode={msg.mode})")
+        elif isinstance(msg, (TrainSFTMsg, TrainRLMsg)):
+            logger.info_rank0(f"Received train request: {type(msg).__name__}")
             if hasattr(self, "_pending_train_requests"):
                 self._pending_train_requests.append(msg)
             else:

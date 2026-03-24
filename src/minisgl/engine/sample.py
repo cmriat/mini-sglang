@@ -21,6 +21,9 @@ def make_device_tensor(data: List, dtype: torch.dtype, device: torch.device) -> 
     return torch.tensor(data, dtype=dtype, pin_memory=True).to(device, non_blocking=True)
 
 
+_sampling_offset = 0
+
+
 def sample_impl(
     logits: torch.Tensor,
     temperatures: torch.Tensor,
@@ -29,20 +32,25 @@ def sample_impl(
 ) -> torch.Tensor:
     import flashinfer.sampling as sampling
 
+    # flashinfer requires explicit seed+offset for RNG diversity
+    global _sampling_offset
+    _sampling_offset += 1
+    rng_kwargs = dict(seed=42, offset=_sampling_offset)
+
     probs = sampling.softmax(logits, temperatures, enable_pdl=is_sm90_supported())
     if top_k is None and top_p is None:
-        return sampling.sampling_from_probs(probs)
+        return sampling.sampling_from_probs(probs, **rng_kwargs)
 
     if top_p is None:
         assert top_k is not None
-        return sampling.top_k_sampling_from_probs(probs, top_k)
+        return sampling.top_k_sampling_from_probs(probs, top_k, **rng_kwargs)
 
     if top_k is None:
         assert top_p is not None
-        return sampling.top_p_sampling_from_probs(probs, top_p)
+        return sampling.top_p_sampling_from_probs(probs, top_p, **rng_kwargs)
 
     assert top_k is not None and top_p is not None
-    return sampling.top_k_top_p_sampling_from_probs(probs, top_k, top_p)
+    return sampling.top_k_top_p_sampling_from_probs(probs, top_k, top_p, **rng_kwargs)
 
 
 @dataclass

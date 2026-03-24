@@ -68,7 +68,7 @@ def launch_server(run_shell: bool = False) -> None:
     import multiprocessing as mp
     mp.set_start_method("spawn", force=True)
     manager = mp.Manager()
-    train_config = manager.dict({"lr": 1e-4, "max_grad_norm": 1.0})
+    train_config = manager.dict({"lr": 1e-5, "max_grad_norm": 1.0})
 
     def start_subprocess() -> None:
         from minisgl.tokenizer import tokenize_worker

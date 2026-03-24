@@ -113,6 +113,16 @@ class Engine:
             cache_handle=None,  # type: ignore
         )
         self.page_table[self.dummy_req.table_idx].fill_(num_tokens)  # point to dummy page
+        self._init_graph_runner()
+
+    def _init_graph_runner(self):
+        """(Re)create CUDA graph runner. Safe to call multiple times."""
+        config = self.config
+        # Recreate attention backend to reset capture state
+        self.ctx.attn_backend = self.attn_backend = create_attention_backend(
+            config.attention_backend, config.model_config
+        )
+        free_memory = self._sync_get_memory()[1]
         self.graph_runner = GraphRunner(
             stream=self.stream,
             device=self.device,
@@ -120,8 +130,8 @@ class Engine:
             attn_backend=self.attn_backend,
             cuda_graph_bs=config.cuda_graph_bs,
             cuda_graph_max_bs=config.cuda_graph_max_bs,
-            free_memory=init_free_memory,
-            max_seq_len=aligned_max_seq_len,
+            free_memory=free_memory,
+            max_seq_len=self.max_seq_len,
             vocab_size=config.model_config.vocab_size,
             dummy_req=self.dummy_req,
         )

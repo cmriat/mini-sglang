@@ -37,7 +37,7 @@ def _run_scheduler(args: ServerArgs, ack_queue: mp.Queue[str]) -> None:
             scheduler.shutdown()
 
 
-def launch_server(run_shell: bool = False) -> None:
+def launch_server(run_shell: bool = False, run_scheduler_fn=None, app_hook=None) -> None:
     from .api_server import run_api_server
     from .args import parse_args
 
@@ -62,7 +62,7 @@ def launch_server(run_shell: bool = False) -> None:
                 tp_info=DistributedInfo(i, world_size),
             )
             mp.Process(
-                target=_run_scheduler,
+                target=run_scheduler_fn or _run_scheduler,
                 args=(new_args, ack_queue),
                 daemon=False,
                 name=f"minisgl-TP{i}-scheduler",
@@ -110,7 +110,7 @@ def launch_server(run_shell: bool = False) -> None:
         for _ in range(num_tokenizers + 2):
             logger.info(ack_queue.get())
 
-    run_api_server(server_args, start_subprocess, run_shell=run_shell)
+    run_api_server(server_args, start_subprocess, run_shell=run_shell, app_hook=app_hook)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ from minisgl.core import SamplingParams
 from minisgl.env import ENV
 from minisgl.message import (
     AbortMsg,
+    BaseBackendMsg,
     BaseFrontendMsg,
     BaseTokenizerMsg,
     BatchFrontendMsg,
@@ -102,6 +103,7 @@ class FrontendManager:
     config: ServerArgs
     send_tokenizer: ZmqAsyncPushQueue[BaseTokenizerMsg]
     recv_tokenizer: ZmqAsyncPullQueue[BaseFrontendMsg]
+    send_to_scheduler: ZmqAsyncPushQueue | None = None
     uid_counter: int = 0
     initialized: bool = False
     ack_map: Dict[int, List[UserReply]] = field(default_factory=dict)
@@ -400,7 +402,8 @@ async def shell():
             child.kill()
 
 
-def run_api_server(config: ServerArgs, start_backend: Callable[[], None], run_shell: bool) -> None:
+def run_api_server(config: ServerArgs, start_backend: Callable[[], None], run_shell: bool,
+                   app_hook: Callable | None = None) -> None:
     """
     Run the frontend API server (FastAPI + uvicorn) and wire it to the tokenizer process via ZMQ.
 
@@ -432,7 +435,14 @@ def run_api_server(config: ServerArgs, start_backend: Callable[[], None], run_sh
             create=config.frontend_create_tokenizer_link,
             encoder=BaseTokenizerMsg.encoder,
         ),
+        send_to_scheduler=ZmqAsyncPushQueue(
+            config.zmq_backend_addr,
+            create=False,
+            encoder=BaseBackendMsg.encoder,
+        ),
     )
+    if app_hook is not None:
+        app_hook(app, _GLOBAL_STATE.send_to_scheduler)
 
     # start the backend here
     start_backend()

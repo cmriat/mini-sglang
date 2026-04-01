@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, NamedTuple, NoReturn, Set, Tuple, TypeAlias
+from typing import TYPE_CHECKING, Callable, List, NamedTuple, NoReturn, Set, Tuple, TypeAlias
 
 import torch
 from minisgl.core import Batch, Req
@@ -43,10 +43,10 @@ ForwardData: TypeAlias = "Tuple[ForwardInput, ForwardOutput]"
 
 
 class Scheduler(SchedulerIOMixin):
-    def __init__(self, config: SchedulerConfig):
+    def __init__(self, config: SchedulerConfig, tp_cpu_group=None):
         from minisgl.engine import Engine
 
-        self.engine = Engine(config)
+        self.engine = Engine(config, tp_cpu_group=tp_cpu_group)
 
         # use another stream to overlap metadata processing with computation
         self.device = self.engine.device
@@ -54,7 +54,20 @@ class Scheduler(SchedulerIOMixin):
         self.engine_stream_ctx = torch.cuda.stream(self.engine.stream)
         torch.cuda.set_stream(self.stream)
 
-        # initialize other managers
+        # Generic hooks for extensibility (e.g. training windows)
+        self._extra_msg_handlers: dict[type, Callable] = {}
+        self._hook_check: Callable[[], bool] | None = None
+        self._hook_run: Callable[[], None] | None = None
+
+        if not config.train:
+            self.init_runtime(config)
+
+    def init_runtime(self, config: SchedulerConfig):
+        """Initialize I/O, tokenizer, and managers.
+
+        Separated from __init__ so external frameworks can init training
+        between model load and KV cache allocation.
+        """
         self.table_manager = TableManager(config.max_running_req, self.engine.page_table)
         self.cache_manager = CacheManager(
             self.engine.num_pages, config.page_size, self.engine.page_table, config.cache_type
@@ -70,8 +83,6 @@ class Scheduler(SchedulerIOMixin):
         self.eos_token_id = self.tokenizer.eos_token_id
         self.token_pool = self.table_manager.token_pool
         self.prefill_budget = config.max_extend_tokens
-        # self.config = config
-
         # Initialize the I/O mixin
         super().__init__(config, self.engine.tp_cpu_group)
 
@@ -79,6 +90,16 @@ class Scheduler(SchedulerIOMixin):
         """Called when the scheduler is idle to perform background tasks."""
         logger.info_rank0("Scheduler is idle, waiting for new reqs...")
         self.cache_manager.check_integrity()
+
+    # === Generic hook API ===
+
+    def register_msg_handler(self, msg_type: type, handler: Callable):
+        self._extra_msg_handlers[msg_type] = handler
+
+    def set_between_batch_hook(self, check_fn: Callable[[], bool],
+                               run_fn: Callable[[], None]):
+        self._hook_check = check_fn
+        self._hook_run = run_fn
 
     def overlap_loop(self, last_data: ForwardData | None) -> ForwardData | None:
         """
@@ -103,6 +124,10 @@ class Scheduler(SchedulerIOMixin):
                 ongoing_data = (forward_input, self._forward(forward_input))
 
         self._process_last_data(last_data)
+        if self._hook_check is not None and self._hook_check():
+            self._process_last_data(ongoing_data)
+            ongoing_data = None
+            self._hook_run()
         return ongoing_data
 
     def normal_loop(self) -> None:
@@ -116,6 +141,8 @@ class Scheduler(SchedulerIOMixin):
             ongoing_data = (forward_input, self._forward(forward_input))
 
         self._process_last_data(ongoing_data)
+        if self._hook_check is not None and self._hook_check():
+            self._hook_run()
 
     @torch.inference_mode()
     def run_forever(self) -> NoReturn:
@@ -167,6 +194,11 @@ class Scheduler(SchedulerIOMixin):
         self.send_result(reply)
 
     def _process_one_msg(self, msg: BaseBackendMsg) -> None:
+        handler = self._extra_msg_handlers.get(type(msg))
+        if handler is not None:
+            handler(msg)
+            return
+
         if isinstance(msg, BatchBackendMsg):
             for msg in msg.data:
                 self._process_one_msg(msg)

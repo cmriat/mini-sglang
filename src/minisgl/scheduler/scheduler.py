@@ -45,7 +45,7 @@ ForwardData: TypeAlias = "Tuple[ForwardInput, ForwardOutput]"
 class Scheduler(SchedulerIOMixin):
     def __init__(self, config: SchedulerConfig, tp_cpu_group=None):
         from minisgl.engine import Engine
-
+        self.config = config
         self.engine = Engine(config, tp_cpu_group=tp_cpu_group)
 
         # use another stream to overlap metadata processing with computation
@@ -60,14 +60,18 @@ class Scheduler(SchedulerIOMixin):
         self._hook_run: Callable[[], None] | None = None
 
         if not config.train:
-            self.init_runtime(config)
+            self.init_runtime()
+        
+        # Initialize the I/O mixin
+        super().__init__(config, self.engine.tp_cpu_group)
 
-    def init_runtime(self, config: SchedulerConfig):
+    def init_runtime(self):
         """Initialize I/O, tokenizer, and managers.
 
         Separated from __init__ so external frameworks can init training
         between model load and KV cache allocation.
         """
+        config = self.config
         self.table_manager = TableManager(config.max_running_req, self.engine.page_table)
         self.cache_manager = CacheManager(
             self.engine.num_pages, config.page_size, self.engine.page_table, config.cache_type
@@ -83,8 +87,7 @@ class Scheduler(SchedulerIOMixin):
         self.eos_token_id = self.tokenizer.eos_token_id
         self.token_pool = self.table_manager.token_pool
         self.prefill_budget = config.max_extend_tokens
-        # Initialize the I/O mixin
-        super().__init__(config, self.engine.tp_cpu_group)
+
 
     def run_when_idle(self) -> None:
         """Called when the scheduler is idle to perform background tasks."""
@@ -144,7 +147,6 @@ class Scheduler(SchedulerIOMixin):
         if self._hook_check is not None and self._hook_check():
             self._hook_run()
 
-    @torch.inference_mode()
     def run_forever(self) -> NoReturn:
         if ENV.DISABLE_OVERLAP_SCHEDULING:
             with self.engine_stream_ctx:
@@ -256,6 +258,7 @@ class Scheduler(SchedulerIOMixin):
         )
         return self._prepare_batch(batch) if batch else None
 
+    @torch.inference_mode()
     def _forward(self, forward_input: ForwardInput) -> ForwardOutput:
         batch, sample_args, input_mapping, output_mapping = forward_input
         batch.input_ids = self.token_pool[input_mapping]

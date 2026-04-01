@@ -19,3 +19,6 @@ class TableManager:
 
     def free(self, slot: int) -> None:
         self._free_slots.append(slot)
+
+    def reset(self) -> None:
+        self._free_slots = list(range(self._max_running_reqs))

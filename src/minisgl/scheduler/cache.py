@@ -78,6 +78,11 @@ class CacheManager:
             req.cache_handle = new_handle
             self.lock(new_handle)
 
+    def reset(self) -> None:
+        """Return all pages to free pool and clear prefix cache."""
+        self.free_slots = torch.arange(self.num_pages, dtype=torch.int32, device=self.device) * self.page_size
+        self.prefix_cache.evict(self.prefix_cache.size_info.total_size)
+
     def check_integrity(self) -> None:
         self.prefix_cache.check_integrity()
         cache_pages = self.prefix_cache.size_info.total_size // self.page_size

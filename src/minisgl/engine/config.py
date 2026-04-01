@@ -29,6 +29,8 @@ class EngineConfig:
     use_pynccl: bool = True
     max_seq_len_override: int | None = None
     num_page_override: int | None = None  # if not None, will override the number of pages
+    train: bool = False
+    lr: float = 1e-4
 
     @cached_property
     def hf_config(self):

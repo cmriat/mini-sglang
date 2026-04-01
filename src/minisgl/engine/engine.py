@@ -27,8 +27,8 @@ class ForwardOutput(NamedTuple):
 
 
 class Engine:
-    def __init__(self, config: EngineConfig):
-        assert not torch.cuda.is_initialized()
+    def __init__(self, config: EngineConfig, tp_cpu_group=None):
+        self.config = config
         set_tp_info(rank=config.tp_info.rank, size=config.tp_info.size)
         _adjust_config(config)
 
@@ -41,15 +41,27 @@ class Engine:
         self.ctx = Context(config.page_size)
         set_global_ctx(self.ctx)
 
-        self.tp_cpu_group = self._init_communication(config)
-        init_free_memory = self._sync_get_memory()[1]
-        logger.info_rank0(f"Free memory before loading model: {mem_GB(init_free_memory)}")
+        self.tp_cpu_group = self._init_communication(config, tp_cpu_group)
 
         # ======================= Model initialization ========================
         set_rope_device(self.device)
         with torch.device("meta"), torch_dtype(config.dtype):
             self.model = create_model(config.model_config)
         self.model.load_state_dict(self._load_weight_state_dict(config))
+
+        if not config.train:
+            self.init_runtime()
+
+    def init_runtime(self):
+        """Initialize KV cache, page table, attention backend, sampler, and CUDA graphs.
+
+        Separated from __init__ so that training module can initialize between
+        model loading and KV cache allocation (to_empty needs temporary GPU memory).
+        Call this after training init + GC to maximize KV cache size.
+        """
+        config = self.config
+        init_free_memory = self._sync_get_memory()[1]
+        logger.info_rank0(f"Free memory before runtime init: {mem_GB(init_free_memory)}")
 
         # ======================= KV cache initialization ========================
         self.num_pages = self._determine_num_pages(init_free_memory, config)
@@ -109,16 +121,17 @@ class Engine:
             dummy_req=self.dummy_req,
         )
 
-    def _init_communication(self, config: EngineConfig) -> torch.distributed.ProcessGroup:
+    def _init_communication(self, config: EngineConfig, tp_cpu_group=None) -> torch.distributed.ProcessGroup:
         if config.tp_info.size == 1 or config.use_pynccl:
-            torch.distributed.init_process_group(
-                backend="gloo",
-                rank=config.tp_info.rank,
-                world_size=config.tp_info.size,
-                timeout=timedelta(seconds=config.distributed_timeout),
-                init_method=config.distributed_addr,
-            )
-            tp_cpu_group = torch.distributed.group.WORLD
+            if tp_cpu_group is None:
+                torch.distributed.init_process_group(
+                    backend="gloo",
+                    rank=config.tp_info.rank,
+                    world_size=config.tp_info.size,
+                    timeout=timedelta(seconds=config.distributed_timeout),
+                    init_method=config.distributed_addr,
+                )
+                tp_cpu_group = torch.distributed.group.WORLD
             assert tp_cpu_group is not None
             max_bytes = (
                 config.max_forward_len * config.model_config.hidden_size * self.dtype.itemsize

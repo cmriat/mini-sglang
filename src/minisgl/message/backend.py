@@ -9,14 +9,25 @@ from minisgl.core import SamplingParams
 from .utils import deserialize_type, serialize_type
 
 
+# External types registered here are recognized by the IPC decoder.
+# Example: register_msg_type(SFTRequest) allows SFTRequest to be
+# sent over ZMQ and deserialized on the scheduler side.
+_extra_types: Dict[str, type] = {}
+
+
+def register_msg_type(cls: type) -> None:
+    """Make a type known to the IPC decoder so it can be sent/received over ZMQ."""
+    _extra_types[cls.__name__] = cls
+
+
 @dataclass
 class BaseBackendMsg:
     def encoder(self) -> Dict:
         return serialize_type(self)
 
     @staticmethod
-    def decoder(json: Dict) -> BaseBackendMsg:
-        return deserialize_type(globals(), json)
+    def decoder(json: Dict) -> "BaseBackendMsg":
+        return deserialize_type({**globals(), **_extra_types}, json)
 
 
 @dataclass

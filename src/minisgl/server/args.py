@@ -18,6 +18,11 @@ class ServerArgs(SchedulerConfig):
     num_tokenizer: int = 0
     silent_output: bool = False
 
+    # Training
+    dp_size: int = 1
+    dp_rank: int = 0
+    dp_port: int = 29600
+
     @property
     def share_tokenizer(self) -> bool:
         return self.num_tokenizer == 0
@@ -222,6 +227,12 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         action="store_true",
         help="Run the server in shell mode.",
     )
+
+    parser.add_argument("--train", action="store_true", default=False)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--dp-size", type=int, default=1)
+    parser.add_argument("--dp-rank", type=int, default=0)
+    parser.add_argument("--dp-port", type=int, default=29600)
 
     # Parse arguments
     kwargs = parser.parse_args(args).__dict__.copy()

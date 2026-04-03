@@ -56,18 +56,19 @@ def init_pynccl(
     module = _load_nccl_module()
     cls = _get_pynccl_wrapper_cls()
 
+    group_src = torch.distributed.get_global_rank(tp_cpu_group, 0)
     if tp_rank == 0:
         id_list = [module.create_nccl_uid()]
         torch.distributed.broadcast_object_list(
             id_list,
-            src=0,
+            src=group_src,
             group=tp_cpu_group,
         )
     else:
         id_list = [None]
         torch.distributed.broadcast_object_list(
             id_list,
-            src=0,
+            src=group_src,
             group=tp_cpu_group,
         )
 

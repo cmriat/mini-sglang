@@ -42,7 +42,8 @@ class Engine:
         set_global_ctx(self.ctx)
 
         self.tp_cpu_group = self._init_communication(config, tp_cpu_group)
-
+        self.init_free_memory = self._sync_get_memory()[1]
+        logger.info_rank0(f"Free memory before loading model: {mem_GB(self.init_free_memory)}")
         # ======================= Model initialization ========================
         set_rope_device(self.device)
         with torch.device("meta"), torch_dtype(config.dtype):
@@ -60,11 +61,9 @@ class Engine:
         Call this after training init + GC to maximize KV cache size.
         """
         config = self.config
-        init_free_memory = self._sync_get_memory()[1]
-        logger.info_rank0(f"Free memory before runtime init: {mem_GB(init_free_memory)}")
 
         # ======================= KV cache initialization ========================
-        self.num_pages = self._determine_num_pages(init_free_memory, config)
+        self.num_pages = self._determine_num_pages(self.init_free_memory, config)
         num_tokens = self.num_pages * config.page_size
         self.ctx.kv_cache = self.kv_cache = create_kvcache_pool(
             model_config=config.model_config,
@@ -115,7 +114,7 @@ class Engine:
             attn_backend=self.attn_backend,
             cuda_graph_bs=config.cuda_graph_bs,
             cuda_graph_max_bs=config.cuda_graph_max_bs,
-            free_memory=init_free_memory,
+            free_memory=self.init_free_memory,
             max_seq_len=aligned_max_seq_len,
             vocab_size=config.model_config.vocab_size,
             dummy_req=self.dummy_req,

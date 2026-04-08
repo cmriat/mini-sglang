@@ -1,0 +1,31 @@
+[workspace]
+channels = [
+  "https://srgconda.bj.bcebos.com/",
+  "https://repo.prefix.dev/meta-forge",
+  "conda-forge",
+]
+name = "mini-sglang"
+platforms = ["linux-64"]
+preview = ["pixi-build"]
+version = "0.1.0"
+
+[system-requirements]
+cuda = "12.9"
+
+[dependencies]
+cuda = "12.9.*"
+minisgl = { path = "python" }
+
+pytest = "*"
+pyarrow = "*"
+
+[activation.env]
+HF_HOME = "/data/hf"
+
+[tasks]
+test = "pytest tests/ -v --ignore=python"
+serve = "python -m minisgl"
+bench-offline = "python benchmark/offline/bench.py"
+bench-offline-wildchat = "python benchmark/offline/bench_wildchat.py"
+bench-online-simple = "python benchmark/online/bench_simple.py"
+bench-online-qwen = "python benchmark/online/bench_qwen.py"

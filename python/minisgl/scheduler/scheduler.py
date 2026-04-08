@@ -119,6 +119,12 @@ class Scheduler(SchedulerIOMixin):
         for msg in self.receive_msg(blocking=blocking):
             self._process_one_msg(msg)
 
+        # Run hook before scheduling — training requests take priority over inference
+        if self._hook_check is not None and self._hook_check():
+            self._process_last_data(last_data)
+            self._hook_run()
+            return None
+
         forward_input = self._schedule_next_batch()
         ongoing_data = None
         if forward_input is not None:
@@ -127,10 +133,6 @@ class Scheduler(SchedulerIOMixin):
                 ongoing_data = (forward_input, self._forward(forward_input))
 
         self._process_last_data(last_data)
-        if self._hook_check is not None and self._hook_check():
-            self._process_last_data(ongoing_data)
-            ongoing_data = None
-            self._hook_run()
         return ongoing_data
 
     def normal_loop(self) -> None:
@@ -138,14 +140,16 @@ class Scheduler(SchedulerIOMixin):
         for msg in self.receive_msg(blocking=blocking):
             self._process_one_msg(msg)
 
+        if self._hook_check is not None and self._hook_check():
+            self._hook_run()
+            return
+
         forward_input = self._schedule_next_batch()
         ongoing_data = None
         if forward_input is not None:
             ongoing_data = (forward_input, self._forward(forward_input))
 
         self._process_last_data(ongoing_data)
-        if self._hook_check is not None and self._hook_check():
-            self._hook_run()
 
     def run_forever(self) -> NoReturn:
         if ENV.DISABLE_OVERLAP_SCHEDULING:
